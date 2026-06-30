@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>等时线地图 | Isochrone Map</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        :root {
+            --bg-primary: #0a0a1a;
+            --bg-secondary: #12122a;
+            --bg-tertiary: #1a1a3a;
+            --bg-card: rgba(26, 26, 58, 0.92);
+            --text-primary: #e0e0ff;
+            --text-secondary: #8888aa;
+            --accent-1: #6366f1;
+            --accent-2: #8b5cf6;
+            --accent-3: #a855f7;
+            --accent-4: #d946ef;
+            --accent-5: #ec4899;
+            --gradient-1: linear-gradient(135deg, #6366f1, #8b5cf6);
+            --border: rgba(255, 255, 255, 0.1);
+            --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            overflow: hidden;
+            height: 100vh;
+        }
+
+        #map { width: 100%; height: 100vh; z-index: 1; }
+
+        /* ── Panel ─────────────────────────────── */
+        .controls-panel {
+            position: fixed; top: 20px; left: 20px; z-index: 1000;
+            background: var(--bg-card);
+            backdrop-filter: blur(20px);
+            border: 1px solid var(--border);
+            border-radius: 16px; padding: 22px; width: 320px;
+            box-shadow: var(--shadow);
+            max-height: calc(100vh - 40px);
+            overflow-y: auto;
+        }
+
+        .panel-header { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; }
+
+        .logo {
+            width: 44px; height: 44px;
+            background: var(--gradient-1);
+            border-radius: 12px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 22px;
+            box-shadow: 0 4px 15px rgba(99,102,241,0.4);
+            flex-shrink: 0;
+        }
+
+        .panel-title {
+            font-size: 18px; font-weight: 700;
+            background: linear-gradient(90deg, #6366f1, #ec4899);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .panel-subtitle { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+
+        .control-group { margin-bottom: 18px; }
+
+        .control-label {
+            font-size: 10px; font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase; letter-spacing: 1.5px;
+            margin-bottom: 8px;
+            display: flex; align-items: center; gap: 6px;
+        }
+
+        /* City selector */
+        .city-selector { position: relative; }
+        .city-input {
+            width: 100%; padding: 12px 14px;
+            background: var(--bg-tertiary); border: 1px solid var(--border);
+            border-radius: 10px; color: var(--text-primary); font-size: 14px;
+            outline: none; transition: all 0.2s;
+        }
+        .city-input:focus { border-color: var(--accent-1); box-shadow: 0 0 0 3px rgba(99,102,241,0.2); }
+
+        .city-dropdown {
+            position: absolute; top: 100%; left: 0; right: 0;
+            background: var(--bg-secondary); border: 1px solid var(--border);
+            border-radius: 10px; margin-top: 4px;
+            max-height: 240px; overflow-y: auto;
+            display: none; box-shadow: var(--shadow); z-index: 1001;
+        }
+        .city-dropdown.active { display: block; }
+
+        .city-item {
+            padding: 10px 14px; cursor: pointer; transition: all 0.15s;
+            display: flex; align-items: center; gap: 10px;
+            border-bottom: 1px solid rgba(255,255,255,0.04);
+        }
+        .city-item:last-child { border-bottom: none; }
+        .city-item:hover { background: var(--bg-tertiary); }
+        .city-item.selected { background: rgba(99,102,241,0.2); }
+        .city-flag { font-size: 20px; }
+        .city-info { flex: 1; }
+        .city-name { font-size: 13px; font-weight: 600; }
+        .city-country { font-size: 11px; color: var(--text-secondary); }
+
+        /* Transport modes */
+        .transport-modes { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+        .mode-btn {
+            padding: 10px 4px;
+            background: var(--bg-tertiary); border: 1px solid var(--border);
+            border-radius: 10px; color: var(--text-secondary);
+            font-size: 10px; font-weight: 500; cursor: pointer;
+            transition: all 0.25s;
+            display: flex; flex-direction: column; align-items: center; gap: 6px;
+        }
+        .mode-btn:hover { border-color: var(--accent-1); color: var(--text-primary); transform: translateY(-1px); }
+        .mode-btn.active {
+            background: var(--gradient-1); border-color: transparent;
+            color: white; box-shadow: 0 4px 12px rgba(99,102,241,0.4);
+        }
+        .mode-icon { font-size: 18px; }
+
+        /* Time slider */
+        .time-display { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 10px; }
+        .time-value {
+            font-size: 28px; font-weight: 800;
+            background: linear-gradient(90deg, #6366f1, #ec4899);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .time-unit { font-size: 13px; color: var(--text-secondary); margin-left: 3px; }
+        .time-range-text { font-size: 10px; color: var(--text-secondary); }
+
+        input[type="range"] {
+            width: 100%; height: 5px;
+            -webkit-appearance: none; background: var(--bg-tertiary);
+            border-radius: 3px; outline: none;
+        }
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none; width: 20px; height: 20px;
+            background: white; border-radius: 50%; cursor: pointer;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3); transition: transform 0.2s;
+        }
+        input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.2); }
+
+        /* Buttons */
+        .generate-btn {
+            width: 100%; padding: 14px; background: var(--gradient-1);
+            border: none; border-radius: 12px; color: white;
+            font-size: 14px; font-weight: 600; cursor: pointer;
+            transition: all 0.25s;
+            display: flex; align-items: center; justify-content: center; gap: 8px;
+            margin-top: 6px;
+        }
+        .generate-btn:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(99,102,241,0.5); }
+        .generate-btn:active { transform: translateY(0); }
+        .generate-btn.loading { opacity: 0.75; cursor: wait; pointer-events: none; }
+
+        .spinner {
+            width: 16px; height: 16px;
+            border: 2px solid rgba(255,255,255,0.3); border-top-color: white;
+            border-radius: 50%; animation: spin 0.8s linear infinite; display: none;
+        }
+        .generate-btn.loading .spinner { display: block; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .clear-btn {
+            width: 100%; padding: 10px; margin-top: 6px;
+            background: transparent; border: 1px solid var(--border);
+            border-radius: 10px; color: var(--text-secondary);
+            font-size: 12px; cursor: pointer; transition: all 0.2s;
+        }
+        .clear-btn:hover { border-color: #ef4444; color: #ef4444; }
+
+        .toggle-markers { display: flex; gap: 6px; margin-top: 6px; }
+        .toggle-btn {
+            flex: 1; padding: 9px;
+            background: var(--bg-tertiary); border: 1px solid var(--border);
+            border-radius: 9px; color: var(--text-secondary);
+            font-size: 11px; cursor: pointer; transition: all 0.2s;
+            display: flex; align-items: center; justify-content: center; gap: 5px;
+        }
+        .toggle-btn:hover { border-color: var(--accent-1); }
+        .toggle-btn.active { background: rgba(99,102,241,0.2); border-color: var(--accent-1); color: var(--accent-1); }
+
+        /* API status badge */
+        .api-status {
+            display: flex; align-items: center; gap: 6px;
+            padding: 6px 10px; border-radius: 8px;
+            font-size: 10px; font-weight: 500; margin-bottom: 14px;
+            border: 1px solid var(--border);
+        }
+        .api-status.valhalla { background: rgba(34,197,94,0.12); border-color: rgba(34,197,94,0.3); color: #4ade80; }
+        .api-status.fallback { background: rgba(234,179,8,0.12); border-color: rgba(234,179,8,0.3); color: #facc15; }
+        .api-status.error { background: rgba(239,68,68,0.12); border-color: rgba(239,68,68,0.3); color: #f87171; }
+        .status-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+        .api-status.valhalla .status-dot { background: #4ade80; }
+        .api-status.fallback .status-dot { background: #facc15; }
+        .api-status.error .status-dot { background: #f87171; }
+
+        /* Legend */
+        .legend-panel {
+            position: fixed; bottom: 20px; left: 20px; z-index: 1000;
+            background: var(--bg-card); backdrop-filter: blur(20px);
+            border: 1px solid var(--border); border-radius: 12px;
+            padding: 14px 18px; box-shadow: var(--shadow);
+        }
+        .legend-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); margin-bottom: 10px; text-transform: uppercase; letter-spacing: 1px; }
+        .legend-items { display: flex; flex-wrap: wrap; gap: 10px; max-width: 380px; }
+        .legend-item { display: flex; align-items: center; gap: 7px; }
+        .legend-color { width: 24px; height: 8px; border-radius: 4px; }
+        .legend-text { font-size: 11px; color: var(--text-primary); font-weight: 500; }
+
+        /* Info panel */
+        .info-panel {
+            position: fixed; top: 20px; right: 20px; z-index: 1000;
+            background: var(--bg-card); backdrop-filter: blur(20px);
+            border: 1px solid var(--border); border-radius: 14px;
+            padding: 20px; width: 290px; box-shadow: var(--shadow); display: none;
+        }
+        .info-panel.active { display: block; animation: slideIn 0.3s ease; }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(16px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        .info-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+        .info-title { font-size: 17px; font-weight: 700; }
+        .info-close {
+            background: var(--bg-tertiary); border: none; color: var(--text-secondary);
+            cursor: pointer; font-size: 14px; width: 28px; height: 28px;
+            border-radius: 7px; display: flex; align-items: center; justify-content: center; transition: all 0.2s;
+        }
+        .info-close:hover { background: rgba(239,68,68,0.2); color: #ef4444; }
+
+        .info-section { margin-bottom: 16px; }
+        .info-section-title { font-size: 10px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 10px; }
+
+        .info-stats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
+        .stat-card { background: var(--bg-tertiary); border-radius: 10px; padding: 12px; }
+        .stat-value {
+            font-size: 16px; font-weight: 700;
+            background: linear-gradient(90deg, #6366f1, #ec4899);
+            -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        }
+        .stat-label { font-size: 10px; color: var(--text-secondary); margin-top: 3px; }
+
+        .airport-card { background: var(--bg-tertiary); border-radius: 10px; padding: 12px; display: flex; gap: 10px; align-items: flex-start; }
+        .airport-icon { font-size: 24px; }
+        .airport-info { flex: 1; }
+        .airport-name { font-size: 12px; font-weight: 600; }
+        .airport-code { font-size: 11px; color: var(--accent-1); margin-top: 2px; }
+        .airport-details { font-size: 11px; color: var(--text-secondary); margin-top: 3px; }
+
+        .train-list { display: flex; flex-direction: column; gap: 6px; }
+        .train-item { background: var(--bg-tertiary); border-radius: 8px; padding: 10px 12px; display: flex; align-items: center; gap: 8px; }
+        .train-icon { font-size: 18px; }
+        .train-name { font-size: 12px; font-weight: 500; }
+        .train-type { font-size: 10px; color: var(--accent-2); }
+
+        /* Instructions */
+        .map-instructions {
+            position: fixed; bottom: 20px; right: 20px; z-index: 1000;
+            background: var(--bg-card); backdrop-filter: blur(20px);
+            border: 1px solid var(--border); border-radius: 10px;
+            padding: 12px 16px; font-size: 11px; color: var(--text-secondary);
+            display: flex; align-items: center; gap: 8px;
+        }
+
+        /* Loading overlay */
+        .loading-overlay {
+            position: fixed; inset: 0;
+            background: rgba(10,10,26,0.85); z-index: 2000;
+            display: none; align-items: center; justify-content: center;
+            flex-direction: column; gap: 20px; backdrop-filter: blur(8px);
+        }
+        .loading-overlay.active { display: flex; animation: fadeIn 0.25s ease; }
+
+        @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+        .loading-spinner {
+            width: 54px; height: 54px;
+            border: 4px solid var(--bg-tertiary);
+            border-top-color: var(--accent-1); border-right-color: var(--accent-3);
+            border-radius: 50%; animation: spin 0.9s linear infinite;
+        }
+        .loading-text { font-size: 15px; color: var(--text-secondary); font-weight: 500; }
+        .loading-subtext { font-size: 11px; color: var(--text-secondary); opacity: 0.6; }
+
+        /* Error toast */
+        .toast {
+            position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+            background: rgba(239,68,68,0.15); border: 1px solid rgba(239,68,68,0.4);
+            color: #f87171; padding: 10px 20px; border-radius: 10px;
+            font-size: 13px; z-index: 3000; display: none; backdrop-filter: blur(10px);
+            animation: fadeIn 0.2s ease;
+        }
+        .toast.active { display: block; }
+
+        /* Leaflet overrides */
+        .leaflet-control-zoom { border: none !important; box-shadow: var(--shadow) !important; }
+        .leaflet-control-zoom a {
+            background: var(--bg-card) !important; color: var(--text-primary) !important;
+            border: 1px solid var(--border) !important; backdrop-filter: blur(20px);
+            width: 34px !important; height: 34px !important; line-height: 34px !important;
+        }
+        .leaflet-control-zoom a:hover { background: var(--bg-tertiary) !important; }
+        .leaflet-control-attribution { background: rgba(10,10,26,0.8) !important; color: var(--text-secondary) !important; font-size: 10px !important; }
+        .leaflet-control-attribution a { color: var(--accent-1) !important; }
+
+        /* Custom markers */
+        .custom-marker { background: none; border: none; }
+        .marker-pin {
+            width: 34px; height: 34px;
+            background: var(--gradient-1); border-radius: 50%;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 14px rgba(99,102,241,0.5); position: relative;
+        }
+        .marker-pin::after {
+            content: ''; position: absolute; bottom: -9px; left: 50%; transform: translateX(-50%);
+            border-left: 9px solid transparent; border-right: 9px solid transparent; border-top: 11px solid var(--accent-1);
+        }
+        .marker-pin i { color: white; font-size: 15px; }
+
+        .marker-airport {
+            width: 30px; height: 30px;
+            background: linear-gradient(135deg, #f59e0b, #f97316);
+            border-radius: 6px; transform: rotate(-45deg);
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 3px 10px rgba(245,158,11,0.4);
+        }
+        .marker-airport i { color: white; font-size: 13px; transform: rotate(45deg); }
+
+        .marker-train {
+            width: 28px; height: 28px;
+            background: linear-gradient(135deg, #10b981, #059669);
+            border-radius: 50%; display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 3px 10px rgba(16,185,129,0.4);
+        }
+        .marker-train i { color: white; font-size: 13px; }
+
+        .marker-popup .popup-title { font-size: 13px; font-weight: 600; margin-bottom: 4px; }
+        .marker-popup .popup-info { font-size: 11px; color: #666; }
+
+        ::-webkit-scrollbar { width: 5px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: var(--accent-1); border-radius: 3px; }
+
+        @media (max-width: 768px) {
+            .controls-panel { width: calc(100% - 32px); top: auto; bottom: 16px; left: 16px; max-height: 55vh; }
+            .info-panel { top: 16px; right: 8px; left: 8px; width: auto; }
+            .legend-panel { display: none; }
+            .map-instructions { display: none; }
+        }
+    </style>
+</head>
+<body>
+<div id="map"></div>
+
+<!-- Controls -->
+<div class="controls-panel">
+    <div class="panel-header">
+        <div class="logo"><i class="fas fa-map-marked-alt"></i></div>
+        <div>
+            <div class="panel-title">等时线地图</div>
+            <div class="panel-subtitle">Isochrone Map · Valhalla Engine</div>
+        </div>
+    </div>
+
+    <!-- API status -->
+    <div class="api-status fallback" id="apiStatus">
+        <div class="status-dot"></div>
+        <span id="apiStatusText">正在检测 API 状态...</span>
+    </div>
+
+    <!-- City selector -->
+    <div class="control-group">
+        <div class="control-label"><i class="fas fa-city"></i> 选择城市</div>
+        <div class="city-selector">
+            <input type="text" class="city-input" placeholder="搜索城市..." id="citySearch" autocomplete="off">
+            <div class="city-dropdown" id="cityDropdown"></div>
+        </div>
+    </div>
+
+    <!-- Transport mode -->
+    <div class="control-group">
+        <div class="control-label"><i class="fas fa-route"></i> 交通方式</div>
+        <div class="transport-modes">
+            <button class="mode-btn active" data-mode="driving-car">
+                <span class="mode-icon">🚗</span>
+                <span>驾车</span>
+            </button>
+            <button class="mode-btn" data-mode="foot-walking">
+                <span class="mode-icon">🚶</span>
+                <span>步行</span>
+            </button>
+            <button class="mode-btn" data-mode="cycling-regular">
+                <span class="mode-icon">🚴</span>
+                <span>骑行</span>
+            </button>
+            <button class="mode-btn" data-mode="transit">
+                <span class="mode-icon">🚇</span>
+                <span>公交</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Time range -->
+    <div class="control-group">
+        <div class="control-label"><i class="fas fa-clock"></i> 时间范围</div>
+        <div>
+            <div class="time-display">
+                <div>
+                    <span class="time-value" id="timeValue">15</span>
+                    <span class="time-unit">分钟</span>
+                </div>
+                <span class="time-range-text">5 – 120 分钟</span>
+            </div>
+            <input type="range" min="5" max="120" step="5" value="15" id="timeRange">
+        </div>
+    </div>
+
+    <!-- Marker toggles -->
+    <div class="control-group">
+        <div class="control-label"><i class="fas fa-layer-group"></i> 显示标记</div>
+        <div class="toggle-markers">
+            <button class="toggle-btn active" id="toggleAirport"><i class="fas fa-plane"></i> 机场</button>
+            <button class="toggle-btn active" id="toggleTrain"><i class="fas fa-train"></i> 火车站</button>
+        </div>
+    </div>
+
+    <button class="generate-btn" id="generateBtn">
+        <div class="spinner"></div>
+        <i class="fas fa-magic" id="btnIcon"></i>
+        <span id="btnText">生成等时线</span>
+    </button>
+    <button class="clear-btn" id="clearBtn"><i class="fas fa-trash-alt"></i> 清除等时线</button>
+</div>
+
+<!-- Legend (dynamic) -->
+<div class="legend-panel">
+    <div class="legend-title">等时线图例</div>
+    <div class="legend-items" id="legendItems"></div>
+</div>
+
+<!-- Info panel -->
+<div class="info-panel" id="infoPanel">
+    <div class="info-header">
+        <div class="info-title" id="infoTitle">城市信息</div>
+        <button class="info-close" id="infoClose"><i class="fas fa-times"></i></button>
+    </div>
+    <div class="info-section">
+        <div class="info-section-title">城市数据</div>
+        <div class="info-stats">
+            <div class="stat-card"><div class="stat-value" id="statArea">--</div><div class="stat-label">面积</div></div>
+            <div class="stat-card"><div class="stat-value" id="statPopulation">--</div><div class="stat-label">人口</div></div>
+            <div class="stat-card"><div class="stat-value" id="statStations">--</div><div class="stat-label">地铁站</div></div>
+            <div class="stat-card"><div class="stat-value" id="statDensity">--</div><div class="stat-label">人口密度</div></div>
+        </div>
+    </div>
+    <div class="info-section" id="airportSection">
+        <div class="info-section-title"><i class="fas fa-plane"></i> 最近机场</div>
+        <div class="airport-card">
+            <div class="airport-icon">✈️</div>
+            <div class="airport-info">
+                <div class="airport-name" id="airportName">--</div>
+                <div class="airport-code" id="airportCode">--</div>
+                <div class="airport-details" id="airportDetails">--</div>
+            </div>
+        </div>
+    </div>
+    <div class="info-section" id="trainSection">
+        <div class="info-section-title"><i class="fas fa-train"></i> 主要火车站</div>
+        <div class="train-list" id="trainList"></div>
+    </div>
+</div>
+
+<div class="map-instructions">
+    <i class="fas fa-mouse-pointer"></i>
+    点击地图设置起点，或选择城市快速定位
+</div>
+
+<div class="loading-overlay" id="loadingOverlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text" id="loadingText">正在计算等时线...</div>
+    <div class="loading-subtext" id="loadingSubtext">使用 Valhalla 真实路网引擎</div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ─── City dataset ─────────────────────────────────────────────────────────────
+const CITIES = [
+    {
+        name:"北京", nameEn:"Beijing", country:"中国", flag:"🇨🇳",
+        lat:39.9042, lng:116.4074, zoom:11,
+        info:{area:"16,410 km²", population:"2,189万", stations:"490座", density:"1,334/km²"},
+        airport:{name:"北京首都国际机场", code:"PEK", lat:40.0799, lng:116.6031, distance:"25km", transit:"45分钟（机场快轨）"},
+        trains:[
+            {name:"北京南站",lat:39.8652,lng:116.3789,type:"高铁"},
+            {name:"北京西站",lat:39.8957,lng:116.3212,type:"高铁/普速"},
+            {name:"北京站",lat:39.9037,lng:116.4277,type:"普速"}
+        ]
+    },
+    {
+        name:"上海", nameEn:"Shanghai", country:"中国", flag:"🇨🇳",
+        lat:31.2304, lng:121.4737, zoom:11,
+        info:{area:"6,340 km²", population:"2,487万", stations:"508座", density:"3,923/km²"},
+        airport:{name:"上海浦东国际机场", code:"PVG", lat:31.1443, lng:121.8083, distance:"30km", transit:"50分钟（磁悬浮+地铁）"},
+        trains:[
+            {name:"上海虹桥站",lat:31.1946,lng:121.3311,type:"高铁"},
+            {name:"上海站",lat:31.2518,lng:121.4597,type:"高铁/普速"},
+            {name:"上海南站",lat:31.1547,lng:121.4302,type:"普速"}
+        ]
+    },
+    {
+        name:"广州", nameEn:"Guangzhou", country:"中国", flag:"🇨🇳",
+        lat:23.1291, lng:113.2644, zoom:12,
+        info:{area:"7,434 km²", population:"1,881万", stations:"620座", density:"2,530/km²"},
+        airport:{name:"广州白云国际机场", code:"CAN", lat:23.3924, lng:113.2988, distance:"28km", transit:"35分钟（地铁3号线）"},
+        trains:[
+            {name:"广州南站",lat:22.9890,lng:113.2694,type:"高铁"},
+            {name:"广州站",lat:23.1510,lng:113.2590,type:"普速"},
+            {name:"广州东站",lat:23.1517,lng:113.3263,type:"高铁/普速"}
+        ]
+    },
+    {
+        name:"深圳", nameEn:"Shenzhen", country:"中国", flag:"🇨🇳",
+        lat:22.5431, lng:114.0579, zoom:12,
+        info:{area:"1,997 km²", population:"1,768万", stations:"547座", density:"8,853/km²"},
+        airport:{name:"深圳宝安国际机场", code:"SZX", lat:22.6393, lng:113.8107, distance:"32km", transit:"40分钟（地铁11号线）"},
+        trains:[
+            {name:"深圳北站",lat:22.6098,lng:114.0286,type:"高铁"},
+            {name:"福田站",lat:22.5357,lng:114.0538,type:"高铁"},
+            {name:"深圳站",lat:22.5341,lng:114.1270,type:"普速"}
+        ]
+    },
+    {
+        name:"香港", nameEn:"Hong Kong", country:"中国", flag:"🇭🇰",
+        lat:22.3193, lng:114.1694, zoom:12,
+        info:{area:"1,106 km²", population:"748万", stations:"93座", density:"6,763/km²"},
+        airport:{name:"香港国际机场", code:"HKG", lat:22.3080, lng:113.9185, distance:"34km", transit:"24分钟（机场快线）"},
+        trains:[
+            {name:"香港西九龙站",lat:22.3050,lng:114.1622,type:"高铁"},
+            {name:"红磡站",lat:22.3034,lng:114.1820,type:"九广铁路"}
+        ]
+    },
+    {
+        name:"东京", nameEn:"Tokyo", country:"日本", flag:"🇯🇵",
+        lat:35.6762, lng:139.6503, zoom:11,
+        info:{area:"2,194 km²", population:"1,396万", stations:"882座", density:"6,362/km²"},
+        airport:{name:"成田国际机场", code:"NRT", lat:35.7647, lng:140.3864, distance:"60km", transit:"55分钟（成田特快）"},
+        trains:[
+            {name:"东京站",lat:35.6812,lng:139.7671,type:"新干线"},
+            {name:"新宿站",lat:35.6896,lng:139.7006,type:"JR/私铁"},
+            {name:"涩谷站",lat:35.6580,lng:139.7016,type:"JR/私铁"}
+        ]
+    },
+    {
+        name:"首尔", nameEn:"Seoul", country:"韩国", flag:"🇰🇷",
+        lat:37.5665, lng:126.9780, zoom:12,
+        info:{area:"605 km²", population:"978万", stations:"746座", density:"16,165/km²"},
+        airport:{name:"仁川国际机场", code:"ICN", lat:37.4602, lng:126.4407, distance:"52km", transit:"43分钟（机场铁路）"},
+        trains:[
+            {name:"首尔站",lat:37.5547,lng:126.9707,type:"KTX高铁"},
+            {name:"龙山站",lat:37.5330,lng:126.9650,type:"KTX/普速"}
+        ]
+    },
+    {
+        name:"新加坡", nameEn:"Singapore", country:"新加坡", flag:"🇸🇬",
+        lat:1.3521, lng:103.8198, zoom:12,
+        info:{area:"728 km²", population:"568万", stations:"134座", density:"7,802/km²"},
+        airport:{name:"樟宜机场", code:"SIN", lat:1.3644, lng:103.9915, distance:"18km", transit:"30分钟（地铁绿线）"},
+        trains:[]
+    },
+    {
+        name:"伦敦", nameEn:"London", country:"英国", flag:"🇬🇧",
+        lat:51.5074, lng:-0.1278, zoom:11,
+        info:{area:"1,572 km²", population:"898万", stations:"272座", density:"5,712/km²"},
+        airport:{name:"希思罗机场", code:"LHR", lat:51.4700, lng:-0.4543, distance:"24km", transit:"15分钟（希思罗快轨）"},
+        trains:[
+            {name:"国王十字车站",lat:51.5320,lng:-0.1240,type:"国际列车"},
+            {name:"帕丁顿车站",lat:51.5154,lng:-0.1755,type:"长途列车"},
+            {name:"滑铁卢车站",lat:51.5031,lng:-0.1132,type:"城际列车"}
+        ]
+    },
+    {
+        name:"巴黎", nameEn:"Paris", country:"法国", flag:"🇫🇷",
+        lat:48.8566, lng:2.3522, zoom:12,
+        info:{area:"105 km²", population:"216万", stations:"303座", density:"20,571/km²"},
+        airport:{name:"戴高乐机场", code:"CDG", lat:49.0097, lng:2.5479, distance:"25km", transit:"35分钟（RER B线）"},
+        trains:[
+            {name:"巴黎北站",lat:48.8809,lng:2.3553,type:"欧洲之星"},
+            {name:"巴黎里昂车站",lat:48.8443,lng:2.3735,type:"TGV"},
+            {name:"巴黎蒙帕纳斯站",lat:48.8414,lng:2.3219,type:"TGV"}
+        ]
+    },
+    {
+        name:"纽约", nameEn:"New York", country:"美国", flag:"🇺🇸",
+        lat:40.7128, lng:-74.0060, zoom:12,
+        info:{area:"783 km²", population:"834万", stations:"472座", density:"10,648/km²"},
+        airport:{name:"肯尼迪国际机场", code:"JFK", lat:40.6413, lng:-73.7781, distance:"15km", transit:"45分钟（AirTrain+地铁）"},
+        trains:[
+            {name:"宾夕法尼亚车站",lat:40.7506,lng:-73.9935,type:"Amtrak"},
+            {name:"大中央车站",lat:40.7527,lng:-73.9772,type:"Metro-North"}
+        ]
+    },
+    {
+        name:"柏林", nameEn:"Berlin", country:"德国", flag:"🇩🇪",
+        lat:52.5200, lng:13.4050, zoom:12,
+        info:{area:"891 km²", population:"364万", stations:"175座", density:"4,085/km²"},
+        airport:{name:"柏林勃兰登堡机场", code:"BER", lat:52.3667, lng:13.5033, distance:"24km", transit:"30分钟（机场快线）"},
+        trains:[
+            {name:"柏林中央车站",lat:52.5256,lng:13.3695,type:"ICE高铁"},
+            {name:"柏林东站",lat:52.5102,lng:13.4346,type:"长途列车"}
+        ]
+    },
+    {
+        name:"悉尼", nameEn:"Sydney", country:"澳大利亚", flag:"🇦🇺",
+        lat:-33.8688, lng:151.2093, zoom:12,
+        info:{area:"12,368 km²", population:"531万", stations:"170座", density:"429/km²"},
+        airport:{name:"金斯福德·史密斯机场", code:"SYD", lat:-33.9461, lng:151.1772, distance:"8km", transit:"15分钟（机场线）"},
+        trains:[{name:"中央车站",lat:-33.8832,lng:151.2061,type:"城际列车"}]
+    },
+    {
+        name:"迪拜", nameEn:"Dubai", country:"阿联酋", flag:"🇦🇪",
+        lat:25.2048, lng:55.2708, zoom:12,
+        info:{area:"4,114 km²", population:"340万", stations:"53座", density:"826/km²"},
+        airport:{name:"迪拜国际机场", code:"DXB", lat:25.2532, lng:55.3657, distance:"5km", transit:"10分钟（地铁红线）"},
+        trains:[]
+    },
+    {
+        name:"曼谷", nameEn:"Bangkok", country:"泰国", flag:"🇹🇭",
+        lat:13.7563, lng:100.5018, zoom:12,
+        info:{area:"1,569 km²", population:"1,054万", stations:"176座", density:"6,717/km²"},
+        airport:{name:"素万那普机场", code:"BKK", lat:13.6900, lng:100.7501, distance:"25km", transit:"30分钟（机场快线）"},
+        trains:[]
+    }
+];
+
+// ─── Color palette for isochrone bands ────────────────────────────────────────
+const ISO_COLORS = [
+    { stroke: '#6366f1', fill: 'rgba(99,102,241,0.18)' },
+    { stroke: '#7c3aed', fill: 'rgba(124,58,237,0.18)' },
+    { stroke: '#8b5cf6', fill: 'rgba(139,92,246,0.18)' },
+    { stroke: '#a855f7', fill: 'rgba(168,85,247,0.18)' },
+    { stroke: '#c026d3', fill: 'rgba(192,38,211,0.18)' },
+    { stroke: '#d946ef', fill: 'rgba(217,70,239,0.18)' },
+    { stroke: '#e11d48', fill: 'rgba(225,29,72,0.18)' },
+    { stroke: '#ef4444', fill: 'rgba(239,68,68,0.18)' },
+    { stroke: '#f97316', fill: 'rgba(249,115,22,0.18)' },
+    { stroke: '#f59e0b', fill: 'rgba(245,158,11,0.18)' },
+    { stroke: '#eab308', fill: 'rgba(234,179,8,0.18)' },
+    { stroke: '#84cc16', fill: 'rgba(132,204,22,0.18)' },
+];
+
+// Realistic speed estimates (km/h) used only for geometric fallback
+const SPEEDS = {
+    'driving-car': 35,   // urban with traffic
+    'foot-walking': 4.8,
+    'cycling-regular': 14,
+    'transit': 20,       // average incl. waiting
+};
+
+// ─── Map init ─────────────────────────────────────────────────────────────────
+const map = L.map('map', {
+    center: [39.9042, 116.4074],
+    zoom: 12,
+    zoomControl: true,
+    attributionControl: true,
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> &copy; <a href="https://carto.com/">CARTO</a>',
+    subdomains: 'abcd',
+    maxZoom: 19,
+}).addTo(map);
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let currentCity = CITIES[0];
+let currentMode = 'driving-car';
+let currentTime = 15;
+let isochroneLayers = [];
+let startMarker = null;
+let airportMarkers = [];
+let trainMarkers = [];
+let showAirports = true;
+let showTrains = true;
+let lastApiMode = 'fallback'; // 'valhalla' | 'ors' | 'fallback'
+
+// ─── API status check ─────────────────────────────────────────────────────────
+async function checkApiStatus() {
+    try {
+        const r = await fetch('/api/health', { signal: AbortSignal.timeout(5000) });
+        const d = await r.json();
+        setApiStatus('valhalla', '✓ Valhalla 路网引擎就绪');
+    } catch {
+        setApiStatus('fallback', '⚠ 离线模式（几何近似）');
+    }
+}
+
+function setApiStatus(mode, text) {
+    const el = document.getElementById('apiStatus');
+    const txt = document.getElementById('apiStatusText');
+    el.className = `api-status ${mode}`;
+    txt.textContent = text;
+}
+
+// ─── UI init ──────────────────────────────────────────────────────────────────
+function initUI() {
+    const dropdown = document.getElementById('cityDropdown');
+
+    CITIES.forEach((city, index) => {
+        const item = document.createElement('div');
+        item.className = `city-item ${index === 0 ? 'selected' : ''}`;
+        item.innerHTML = `
+            <span class="city-flag">${city.flag}</span>
+            <div class="city-info">
+                <div class="city-name">${city.name}</div>
+                <div class="city-country">${city.country} · ${city.nameEn}</div>
+            </div>`;
+        item.addEventListener('click', () => {
+            dropdown.classList.remove('active');
+            selectCity(city);
+        });
+        dropdown.appendChild(item);
+    });
+
+    document.getElementById('citySearch').value = currentCity.name;
+    updateInfoPanel(currentCity);
+    addCityMarkers(currentCity);
+
+    const searchInput = document.getElementById('citySearch');
+    searchInput.addEventListener('focus', () => dropdown.classList.add('active'));
+    searchInput.addEventListener('input', e => {
+        const q = e.target.value.toLowerCase();
+        dropdown.querySelectorAll('.city-item').forEach(item => {
+            const match = item.querySelector('.city-name').textContent.toLowerCase().includes(q)
+                || item.querySelector('.city-country').textContent.toLowerCase().includes(q);
+            item.style.display = match ? 'flex' : 'none';
+        });
+    });
+    searchInput.addEventListener('blur', () => setTimeout(() => dropdown.classList.remove('active'), 200));
+
+    document.querySelectorAll('.mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentMode = btn.dataset.mode;
+        });
+    });
+
+    const timeRange = document.getElementById('timeRange');
+    timeRange.addEventListener('input', e => {
+        currentTime = parseInt(e.target.value);
+        document.getElementById('timeValue').textContent = currentTime;
+    });
+
+    document.getElementById('generateBtn').addEventListener('click', generateIsochrone);
+    document.getElementById('clearBtn').addEventListener('click', clearIsochrones);
+    map.on('click', e => setStartPoint(e.latlng.lat, e.latlng.lng));
+    document.getElementById('infoClose').addEventListener('click', () => document.getElementById('infoPanel').classList.remove('active'));
+
+    document.getElementById('toggleAirport').addEventListener('click', function () {
+        showAirports = !showAirports;
+        this.classList.toggle('active', showAirports);
+        updateMarkerVisibility();
+    });
+    document.getElementById('toggleTrain').addEventListener('click', function () {
+        showTrains = !showTrains;
+        this.classList.toggle('active', showTrains);
+        updateMarkerVisibility();
+    });
+
+    // initial start marker
+    setStartPoint(currentCity.lat, currentCity.lng);
+    updateLegend([]);
+    checkApiStatus();
+}
+
+function selectCity(city) {
+    currentCity = city;
+    document.getElementById('citySearch').value = city.name;
+    document.querySelectorAll('.city-item').forEach(item => {
+        item.classList.toggle('selected', item.querySelector('.city-name').textContent === city.name);
+    });
+    map.flyTo([city.lat, city.lng], city.zoom, { duration: 1.2, easeLinearity: 0.3 });
+    setStartPoint(city.lat, city.lng);
+    updateInfoPanel(city);
+    clearMarkers();
+    addCityMarkers(city);
+    clearIsochrones();
+}
+
+function setStartPoint(lat, lng) {
+    if (startMarker) map.removeLayer(startMarker);
+    const icon = L.divIcon({
+        className: 'custom-marker',
+        html: '<div class="marker-pin"><i class="fas fa-crosshairs"></i></div>',
+        iconSize: [34, 46], iconAnchor: [17, 46],
+    });
+    startMarker = L.marker([lat, lng], { icon }).addTo(map);
+}
+
+function clearIsochrones() {
+    isochroneLayers.forEach(l => map.removeLayer(l));
+    isochroneLayers = [];
+    updateLegend([]);
+}
+
+function clearMarkers() {
+    [...airportMarkers, ...trainMarkers].forEach(m => map.removeLayer(m));
+    airportMarkers = []; trainMarkers = [];
+}
+
+function addCityMarkers(city) {
+    if (city.airport) {
+        const icon = L.divIcon({
+            className: 'custom-marker',
+            html: '<div class="marker-airport"><i class="fas fa-plane"></i></div>',
+            iconSize: [30, 30], iconAnchor: [15, 15],
+        });
+        const m = L.marker([city.airport.lat, city.airport.lng], { icon })
+            .addTo(map)
+            .bindPopup(`<div class="marker-popup">
+                <div class="popup-title">✈️ ${city.airport.name}</div>
+                <div class="popup-info">${city.airport.code} · ${city.airport.distance} · ${city.airport.transit}</div>
+            </div>`);
+        airportMarkers.push(m);
+    }
+    (city.trains || []).forEach(train => {
+        const icon = L.divIcon({
+            className: 'custom-marker',
+            html: '<div class="marker-train"><i class="fas fa-train"></i></div>',
+            iconSize: [28, 28], iconAnchor: [14, 14],
+        });
+        const m = L.marker([train.lat, train.lng], { icon })
+            .addTo(map)
+            .bindPopup(`<div class="marker-popup">
+                <div class="popup-title">🚂 ${train.name}</div>
+                <div class="popup-info">${train.type}</div>
+            </div>`);
+        trainMarkers.push(m);
+    });
+}
+
+function updateMarkerVisibility() {
+    airportMarkers.forEach(m => showAirports ? map.addLayer(m) : map.removeLayer(m));
+    trainMarkers.forEach(m => showTrains ? map.addLayer(m) : map.removeLayer(m));
+}
+
+function updateInfoPanel(city) {
+    document.getElementById('infoTitle').textContent = `${city.flag} ${city.name}`;
+    document.getElementById('statArea').textContent = city.info.area;
+    document.getElementById('statPopulation').textContent = city.info.population;
+    document.getElementById('statStations').textContent = city.info.stations;
+    document.getElementById('statDensity').textContent = city.info.density;
+
+    if (city.airport) {
+        document.getElementById('airportName').textContent = city.airport.name;
+        document.getElementById('airportCode').textContent = city.airport.code;
+        document.getElementById('airportDetails').textContent = `${city.airport.distance} · ${city.airport.transit}`;
+        document.getElementById('airportSection').style.display = 'block';
+    } else {
+        document.getElementById('airportSection').style.display = 'none';
+    }
+
+    const trainList = document.getElementById('trainList');
+    trainList.innerHTML = '';
+    if (city.trains && city.trains.length > 0) {
+        document.getElementById('trainSection').style.display = 'block';
+        city.trains.forEach(t => {
+            const div = document.createElement('div');
+            div.className = 'train-item';
+            div.innerHTML = `<div class="train-icon">🚂</div><div><div class="train-name">${t.name}</div><div class="train-type">${t.type}</div></div>`;
+            trainList.appendChild(div);
+        });
+    } else {
+        document.getElementById('trainSection').style.display = 'none';
+    }
+    document.getElementById('infoPanel').classList.add('active');
+}
+
+// ─── Legend ───────────────────────────────────────────────────────────────────
+function updateLegend(intervals) {
+    const container = document.getElementById('legendItems');
+    container.innerHTML = '';
+    if (!intervals.length) {
+        container.innerHTML = '<span style="font-size:11px;color:var(--text-secondary)">生成等时线后显示</span>';
+        return;
+    }
+    intervals.forEach((t, i) => {
+        const c = ISO_COLORS[Math.min(i, ISO_COLORS.length - 1)];
+        const item = document.createElement('div');
+        item.className = 'legend-item';
+        item.innerHTML = `<div class="legend-color" style="background:${c.stroke};"></div><span class="legend-text">${t}分钟</span>`;
+        container.appendChild(item);
+    });
+}
+
+// ─── Toast ────────────────────────────────────────────────────────────────────
+function showToast(msg, duration = 3500) {
+    const t = document.getElementById('toast');
+    t.textContent = msg; t.classList.add('active');
+    setTimeout(() => t.classList.remove('active'), duration);
+}
+
+// ─── Main: generate isochrone ────────────────────────────────────────────────
+async function generateIsochrone() {
+    if (!startMarker) { showToast('请先点击地图设置起点，或选择一个城市'); return; }
+
+    const btn = document.getElementById('generateBtn');
+    const loading = document.getElementById('loadingOverlay');
+    btn.classList.add('loading');
+    loading.classList.add('active');
+
+    clearIsochrones();
+
+    const lat = startMarker.getLatLng().lat;
+    const lng = startMarker.getLatLng().lng;
+
+    // Build interval array: every 5 min up to currentTime
+    const intervals = [];
+    for (let t = 5; t <= currentTime; t += 5) intervals.push(t);
+    if (intervals[intervals.length - 1] !== currentTime) intervals.push(currentTime);
+
+    const rangeSeconds = intervals.map(t => t * 60);
+
+    try {
+        const resp = await fetch('/api/isochrone', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ profile: currentMode, location: [lng, lat], range: rangeSeconds }),
+        });
+
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const data = await resp.json();
+        if (data.error) throw new Error(data.error);
+
+        const features = data.features || [];
+        if (features.length === 0) throw new Error('返回数据为空');
+
+        const apiSource = data._source || 'api';
+
+        // Sort: largest contour first so smaller ones render on top
+        const sorted = [...features].sort((a, b) => {
+            const va = a.properties?.contour ?? a.properties?.value ?? 0;
+            const vb = b.properties?.contour ?? b.properties?.value ?? 0;
+            return vb - va;
+        });
+
+        sorted.forEach((feature, i) => {
+            const ci = Math.min(i, ISO_COLORS.length - 1);
+            const c = ISO_COLORS[ci];
+            const layer = L.geoJSON(feature, {
+                style: { color: c.stroke, weight: 2, fillColor: c.stroke, fillOpacity: 0.22 },
+            }).addTo(map);
+            isochroneLayers.push(layer);
+        });
+
+        if (isochroneLayers.length > 0) {
+            const group = L.featureGroup(isochroneLayers);
+            map.fitBounds(group.getBounds().pad(0.08));
+        }
+
+        // Update status based on actual source used by server
+        if (apiSource === 'valhalla') {
+            setApiStatus('valhalla', `✓ Valhalla 真实路网 · ${features.length} 带`);
+        } else if (apiSource === 'ors') {
+            setApiStatus('valhalla', `✓ ORS 真实路网 · ${features.length} 带`);
+        } else {
+            setApiStatus('fallback', `⚠ 几何近似模式 · ${features.length} 带`);
+        }
+        updateLegend(intervals);
+
+    } catch (err) {
+        console.warn('API 等时线请求失败，前端几何降级:', err.message);
+        setApiStatus('error', '✕ 服务器不可用，使用前端几何近似');
+        generateGeometricFallback(lat, lng, intervals);
+        showToast('服务器未响应，已使用几何近似模式');
+        updateLegend(intervals);
+    } finally {
+        btn.classList.remove('loading');
+        loading.classList.remove('active');
+    }
+}
+
+// ─── Geometric fallback (realistic ellipse, not pure circle) ─────────────────
+function generateGeometricFallback(lat, lng, intervals) {
+    // Use speed for the selected mode, apply urban correction factor
+    const speed = SPEEDS[currentMode] || 30;
+
+    intervals.forEach((time, i) => {
+        const ci = Math.min(i, ISO_COLORS.length - 1);
+        const c = ISO_COLORS[ci];
+
+        // Distance in metres at average speed
+        const dist = (speed * time / 60) * 1000;
+
+        // Generate realistic polygon (24 points with mild random variation)
+        const points = [];
+        const nPts = 36;
+        for (let a = 0; a < 360; a += 360 / nPts) {
+            const rad = a * Math.PI / 180;
+            // Slight elliptical distortion (roads denser in one direction) + jitter
+            const rFactor = 0.85 + 0.3 * Math.abs(Math.sin(rad * 2)) + (Math.random() - 0.5) * 0.15;
+            const d = dist * rFactor;
+            // Convert metres to degrees (approximate)
+            const dLat = (d / 111320) * Math.cos(rad);
+            const dLng = (d / (111320 * Math.cos(lat * Math.PI / 180))) * Math.sin(rad);
+            points.push([lat + dLat, lng + dLng]);
+        }
+        points.push(points[0]); // close ring
+
+        const layer = L.polygon(points, {
+            color: c.stroke, weight: 2,
+            fillColor: c.stroke, fillOpacity: 0.20,
+        }).addTo(map);
+        isochroneLayers.push(layer);
+    });
+
+    if (isochroneLayers.length > 0) {
+        const group = L.featureGroup(isochroneLayers);
+        map.fitBounds(group.getBounds().pad(0.08));
+    }
+}
+
+// ─── Bootstrap ────────────────────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', initUI);
+</script>
+</body>
+</html>
